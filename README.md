@@ -23,7 +23,7 @@
 - **Ease of Use:** Provide a simple and clear C API.
 
 ## 📂 Project Structure
-
+```
 loom/
 ├── src/ # Core source files (.c)
 ├── include/ # Public header files (.h)
@@ -33,7 +33,7 @@ loom/
 ├── CMakeLists.txt # Main build script
 ├── LICENSE # License file
 └── README.md # This file
-
+```
 ## 🚀 Getting Started
 
 **Prerequisites:**
