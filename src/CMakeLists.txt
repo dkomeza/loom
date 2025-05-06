@@ -1,5 +1,4 @@
 add_library(loom STATIC
-  loom.c
   core/core.c
 )
 
