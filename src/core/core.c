@@ -73,3 +73,24 @@ void loom_clear_buffer_color(uint32_t color)
       buffer[i] = color;
   }
 }
+
+void loom_draw_h_line(int x, int y, int length, uint32_t color)
+{
+  if (x < 0 || x >= loom_buffer.width || y < 0 || y >= loom_buffer.height)
+    return;
+  if (length <= 0)
+    return;
+
+  for (int i = 0; i < length; i++)
+    loom_draw_pixel(x + i, y, color);
+}
+void loom_draw_v_line(int x, int y, int length, uint32_t color)
+{
+  if (x < 0 || x >= loom_buffer.width || y < 0 || y >= loom_buffer.height)
+    return;
+  if (length <= 0)
+    return;
+
+  for (int i = 0; i < length; i++)
+    loom_draw_pixel(x, y + i, color);
+}
