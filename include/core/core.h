@@ -51,5 +51,16 @@ void loom_draw_h_line(int x, int y, int length, uint32_t color);
  *       The length of the line is specified in pixels.
  */
 void loom_draw_v_line(int x, int y, int length, uint32_t color);
+/**
+ * @brief Draw a rectangle on the screen.
+ * @param x The x-coordinate of the top-left corner of the rectangle.
+ * @param y The y-coordinate of the top-left corner of the rectangle.
+ * @param width The width of the rectangle.
+ * @param height The height of the rectangle.
+ * @param color The color of the rectangle.
+ * @note This function draws a rectangle on the screen starting from the specified coordinates.
+ *       If the coordinates are out of bounds, the function does nothing.
+ */
+void loom_draw_rect(int x, int y, int width, int height, uint32_t color);
 
 #endif

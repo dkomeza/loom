@@ -94,3 +94,19 @@ void loom_draw_v_line(int x, int y, int length, uint32_t color)
   for (int i = 0; i < length; i++)
     loom_draw_pixel(x, y + i, color);
 }
+void loom_draw_rect(int x, int y, int width, int height, uint32_t color)
+{
+  if (x < 0 || x >= loom_buffer.width || y < 0 || y >= loom_buffer.height)
+    return;
+  if (width <= 0 || height <= 0)
+    return;
+
+  for (int i = 0; i < width; i++)
+    loom_draw_pixel(x + i, y, color);
+  for (int i = 0; i < height; i++)
+    loom_draw_pixel(x, y + i, color);
+  for (int i = 0; i < width; i++)
+    loom_draw_pixel(x + i, y + height - 1, color);
+  for (int i = 0; i < height; i++)
+    loom_draw_pixel(x + width - 1, y + i, color);
+}
