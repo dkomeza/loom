@@ -110,3 +110,14 @@ void loom_draw_rect(int x, int y, int width, int height, uint32_t color)
   for (int i = 0; i < height; i++)
     loom_draw_pixel(x + width - 1, y + i, color);
 }
+void loom_fill_rect(int x, int y, int width, int height, uint32_t color)
+{
+  if (x < 0 || x >= loom_buffer.width || y < 0 || y >= loom_buffer.height)
+    return;
+  if (width <= 0 || height <= 0)
+    return;
+
+  for (int i = 0; i < width; i++)
+    for (int j = 0; j < height; j++)
+      loom_draw_pixel(x + i, y + j, color);
+}

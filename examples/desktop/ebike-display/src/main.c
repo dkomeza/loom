@@ -38,7 +38,11 @@ int main(void)
     int state;
     state = mfb_update_ex(window, buffer, 240, 320);
 
-    loom_clear_buffer_color(RGB888(255, 128, 128));
+    loom_clear_buffer();
+
+    loom_draw_rect(0, 0, 240, 320, RGB888(255, 0, 0));
+
+    loom_fill_rect(5, 5, 100, 100, RGB888(0, 255, 0));
 
     if (state < 0)
     {
