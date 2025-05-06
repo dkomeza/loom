@@ -1,0 +1,3 @@
+[submodule "examples/desktop/ebike-display/dependencies/minifb"]
+	path = examples/desktop/ebike-display/dependencies/minifb
+	url = https://github.com/emoon/minifb.git
