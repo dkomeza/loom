@@ -1,0 +1,29 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Loom</title>
+  </head>
+
+  <body class="bg-gray-500">
+    <div
+      id="app"
+      class="flex flex-col items-center justify-center min-h-screen"
+    >
+      <div
+        class="p-8 pb-16 bg-black w-auto rounded-2xl shadow-2xl"
+        style="background-image: url(cf-texture.png); background-size: 200%"
+      >
+        <canvas
+          class="rounded-xl w-[480px] h-[640px] bg-gray-900 select-none border-none outline-none inset-shadow-sm/50"
+          style="image-rendering: pixelated"
+          width="240"
+          height="320"
+          id="screen"
+        ></canvas>
+      </div>
+    </div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
