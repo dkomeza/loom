@@ -29,6 +29,10 @@ loom_err_t loom_fill_round_rect(loom_t *loom, loom_rect_t rect, uint16_t radius,
 loom_err_t loom_stroke_round_rect(loom_t *loom, loom_rect_t rect,
                                   uint16_t radius,
                                   const loom_stroke_t *stroke);
+loom_err_t loom_fill_circle(loom_t *loom, loom_point_t center, uint16_t radius,
+                            loom_color_t color);
+loom_err_t loom_stroke_circle(loom_t *loom, loom_point_t center,
+                              uint16_t radius, const loom_stroke_t *stroke);
 loom_err_t loom_draw_line(loom_t *loom, loom_point_t p0, loom_point_t p1,
                           const loom_stroke_t *stroke);
 loom_err_t loom_draw_arc(loom_t *loom, loom_point_t center, uint16_t radius,

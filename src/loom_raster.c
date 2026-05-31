@@ -12,6 +12,7 @@
 #endif
 
 #define LOOM_HW_FILL_MIN_PIXELS 1024
+#define LOOM_CURVE_AA_SAMPLES 4
 
 static size_t loom_align_up_size(size_t value, size_t alignment) {
   return (value + alignment - 1u) & ~(alignment - 1u);
@@ -166,6 +167,26 @@ static void loom_write_pixel(uint8_t *tile, const loom_t *loom,
   dst[0] = loom_blend_channel(color.r, dst[0], color.a);
   dst[1] = loom_blend_channel(color.g, dst[1], color.a);
   dst[2] = loom_blend_channel(color.b, dst[2], color.a);
+}
+
+static void loom_write_pixel_coverage(uint8_t *tile, const loom_t *loom,
+                                      loom_rect_t tile_rect, int x, int y,
+                                      loom_color_t color, int coverage) {
+  if (coverage <= 0 || color.a == 0) {
+    return;
+  }
+  if (coverage >= LOOM_CURVE_AA_SAMPLES) {
+    loom_write_pixel(tile, loom, tile_rect, x, y, color);
+    return;
+  }
+
+  uint16_t alpha =
+      ((uint16_t)color.a * (uint16_t)coverage +
+       (LOOM_CURVE_AA_SAMPLES / 2)) /
+      LOOM_CURVE_AA_SAMPLES;
+  loom_color_t covered = color;
+  covered.a = (uint8_t)alpha;
+  loom_write_pixel(tile, loom, tile_rect, x, y, covered);
 }
 
 static void loom_fill_span(uint8_t *tile, const loom_t *loom,
@@ -373,6 +394,120 @@ static void loom_raster_stroke_round_rect(uint8_t *tile, const loom_t *loom,
   }
 }
 
+static int loom_circle_fill_coverage(int x, int y, loom_point_t center,
+                                     double radius) {
+  static const double offsets[LOOM_CURVE_AA_SAMPLES][2] = {
+      {-0.25, -0.25}, {0.25, -0.25}, {-0.25, 0.25}, {0.25, 0.25}};
+  double radius_sq = radius * radius;
+  int coverage = 0;
+  for (int i = 0; i < LOOM_CURVE_AA_SAMPLES; ++i) {
+    double dx = (double)x + offsets[i][0] - (double)center.x;
+    double dy = (double)y + offsets[i][1] - (double)center.y;
+    if (dx * dx + dy * dy <= radius_sq) {
+      coverage++;
+    }
+  }
+  return coverage;
+}
+
+static int loom_circle_stroke_coverage(int x, int y, loom_point_t center,
+                                       double inner_radius,
+                                       double outer_radius) {
+  static const double offsets[LOOM_CURVE_AA_SAMPLES][2] = {
+      {-0.25, -0.25}, {0.25, -0.25}, {-0.25, 0.25}, {0.25, 0.25}};
+  double inner_sq = inner_radius * inner_radius;
+  double outer_sq = outer_radius * outer_radius;
+  int coverage = 0;
+  for (int i = 0; i < LOOM_CURVE_AA_SAMPLES; ++i) {
+    double dx = (double)x + offsets[i][0] - (double)center.x;
+    double dy = (double)y + offsets[i][1] - (double)center.y;
+    double distance_sq = dx * dx + dy * dy;
+    if (distance_sq >= inner_sq && distance_sq <= outer_sq) {
+      coverage++;
+    }
+  }
+  return coverage;
+}
+
+static void loom_raster_fill_circle(uint8_t *tile, const loom_t *loom,
+                                    loom_rect_t tile_rect,
+                                    loom_point_t center, uint16_t radius,
+                                    loom_rect_t clip, loom_color_t color) {
+  if (radius == 0 || color.a == 0) {
+    return;
+  }
+
+  double radius_sq = (double)radius * (double)radius;
+  double inner_radius = radius > 1 ? (double)radius - 0.75 : 0.0;
+  double inner_sq = inner_radius * inner_radius;
+
+  for (int y = clip.y; y < clip.y + clip.h; ++y) {
+    double dy = (double)y - (double)center.y;
+    int fill_x0 = 0;
+    int fill_x1 = 0;
+    if (inner_radius > 0.0 && dy * dy <= inner_sq) {
+      int dx = (int)floor(sqrt(inner_sq - dy * dy));
+      fill_x0 = loom_max_int(clip.x, center.x - dx);
+      fill_x1 = loom_min_int(clip.x + clip.w, center.x + dx + 1);
+      if (fill_x1 > fill_x0) {
+        loom_fill_span(tile, loom, tile_rect, y, fill_x0, fill_x1, color);
+      }
+    }
+
+    if (dy * dy > radius_sq + (double)radius + 1.0) {
+      continue;
+    }
+
+    double edge_remaining = radius_sq - dy * dy;
+    int edge_dx = edge_remaining > 0.0 ? (int)ceil(sqrt(edge_remaining)) + 1
+                                       : 1;
+    int edge_x0 = loom_max_int(clip.x, center.x - edge_dx);
+    int edge_x1 = loom_min_int(clip.x + clip.w, center.x + edge_dx + 1);
+    for (int x = edge_x0; x < edge_x1; ++x) {
+      if (fill_x1 > fill_x0 && x >= fill_x0 && x < fill_x1) {
+        continue;
+      }
+      int coverage = loom_circle_fill_coverage(x, y, center, (double)radius);
+      loom_write_pixel_coverage(tile, loom, tile_rect, x, y, color, coverage);
+    }
+  }
+}
+
+static void loom_raster_stroke_circle(uint8_t *tile, const loom_t *loom,
+                                      loom_rect_t tile_rect,
+                                      loom_point_t center, uint16_t radius,
+                                      uint16_t width, loom_rect_t clip,
+                                      loom_color_t color) {
+  if (radius == 0 || width == 0 || color.a == 0) {
+    return;
+  }
+
+  double half_width = (double)width * 0.5;
+  double inner_radius = (double)radius - half_width;
+  double outer_radius = (double)radius + half_width;
+  if (inner_radius < 0.0) {
+    inner_radius = 0.0;
+  }
+
+  double outer_sq = outer_radius * outer_radius;
+  for (int y = clip.y; y < clip.y + clip.h; ++y) {
+    double dy = (double)y - (double)center.y;
+    if (dy * dy > outer_sq + outer_radius) {
+      continue;
+    }
+
+    double remaining = outer_sq - dy * dy;
+    int dx = remaining > 0.0 ? (int)ceil(sqrt(remaining)) + 1 : 1;
+    int x0 = loom_max_int(clip.x, center.x - dx);
+    int x1 = loom_min_int(clip.x + clip.w, center.x + dx + 1);
+    for (int x = x0; x < x1; ++x) {
+      int coverage =
+          loom_circle_stroke_coverage(x, y, center, inner_radius, outer_radius);
+      loom_write_pixel_coverage(tile, loom, tile_rect, x, y, color, coverage);
+    }
+  }
+}
+
 static void loom_draw_brush(uint8_t *tile, const loom_t *loom,
                             loom_rect_t tile_rect, int x, int y, uint16_t width,
                             loom_rect_t clip, loom_color_t color) {
@@ -487,33 +622,103 @@ static void loom_raster_draw_line(uint8_t *tile, const loom_t *loom,
   }
 }
 
+static double loom_cross_double(double ax, double ay, double bx, double by) {
+  return ax * by - ay * bx;
+}
+
+static bool loom_point_in_positive_sweep(double px, double py, double start_x,
+                                         double start_y, double end_x,
+                                         double end_y, int sweep_degrees) {
+  if (sweep_degrees >= 360) {
+    return true;
+  }
+
+  double start_cross = loom_cross_double(start_x, start_y, px, py);
+  double end_cross = loom_cross_double(px, py, end_x, end_y);
+  if (sweep_degrees <= 180) {
+    return start_cross >= -0.000001 && end_cross >= -0.000001;
+  }
+  return start_cross >= -0.000001 || end_cross >= -0.000001;
+}
+
+static bool loom_point_in_arc_sweep(double px, double py,
+                                    const loom_command_t *command) {
+  int sweep = command->data.arc.sweep_degrees;
+  int abs_sweep = loom_abs_int(sweep);
+  if (abs_sweep >= 360) {
+    return true;
+  }
+  if (px == 0.0 && py == 0.0) {
+    return false;
+  }
+
+  if (sweep > 0) {
+    return loom_point_in_positive_sweep(
+        px, py, command->data.arc.start_x, command->data.arc.start_y,
+        command->data.arc.end_x, command->data.arc.end_y, abs_sweep);
+  }
+  return loom_point_in_positive_sweep(
+      px, py, command->data.arc.end_x, command->data.arc.end_y,
+      command->data.arc.start_x, command->data.arc.start_y, abs_sweep);
+}
+
+static int loom_arc_stroke_coverage(int x, int y,
+                                    const loom_command_t *command,
+                                    double inner_radius, double outer_radius) {
+  static const double offsets[LOOM_CURVE_AA_SAMPLES][2] = {
+      {-0.25, -0.25}, {0.25, -0.25}, {-0.25, 0.25}, {0.25, 0.25}};
+  double inner_sq = inner_radius * inner_radius;
+  double outer_sq = outer_radius * outer_radius;
+  loom_point_t center = command->data.arc.center;
+  int coverage = 0;
+
+  for (int i = 0; i < LOOM_CURVE_AA_SAMPLES; ++i) {
+    double dx = (double)x + offsets[i][0] - (double)center.x;
+    double dy = (double)y + offsets[i][1] - (double)center.y;
+    double distance_sq = dx * dx + dy * dy;
+    if (distance_sq >= inner_sq && distance_sq <= outer_sq &&
+        loom_point_in_arc_sweep(dx, dy, command)) {
+      coverage++;
+    }
+  }
+  return coverage;
+}
+
 static void loom_raster_draw_arc(uint8_t *tile, const loom_t *loom,
-                                 loom_rect_t tile_rect, loom_point_t center,
-                                 uint16_t radius, int16_t start_degrees,
-                                 int16_t sweep_degrees, loom_stroke_t stroke,
+                                 loom_rect_t tile_rect,
+                                 const loom_command_t *command,
                                  loom_rect_t clip) {
-  int steps = loom_abs_int(sweep_degrees);
-  steps = loom_max_int(steps, (int)radius / 2);
-  steps = loom_min_int(steps, 720);
-  if (steps <= 0) {
+  uint16_t radius = command->data.arc.radius;
+  uint16_t width = command->data.arc.stroke.width;
+  if (radius == 0 || width == 0 || command->data.arc.stroke.color.a == 0) {
     return;
   }
 
-  double start = (double)start_degrees * M_PI / 180.0;
-  double sweep = (double)sweep_degrees * M_PI / 180.0;
-  loom_point_t prev = {
-      center.x + (int)lround(cos(start) * radius),
-      center.y + (int)lround(sin(start) * radius),
-  };
+  double half_width = (double)width * 0.5;
+  double inner_radius = (double)radius - half_width;
+  double outer_radius = (double)radius + half_width;
+  if (inner_radius < 0.0) {
+    inner_radius = 0.0;
+  }
 
-  for (int i = 1; i <= steps; ++i) {
-    double t = start + sweep * (double)i / (double)steps;
-    loom_point_t next = {
-        center.x + (int)lround(cos(t) * radius),
-        center.y + (int)lround(sin(t) * radius),
-    };
-    loom_raster_draw_line(tile, loom, tile_rect, prev, next, stroke, clip);
-    prev = next;
+  double outer_sq = outer_radius * outer_radius;
+  loom_point_t center = command->data.arc.center;
+  for (int y = clip.y; y < clip.y + clip.h; ++y) {
+    double dy = (double)y - (double)center.y;
+    if (dy * dy > outer_sq + outer_radius) {
+      continue;
+    }
+
+    double remaining = outer_sq - dy * dy;
+    int dx = remaining > 0.0 ? (int)ceil(sqrt(remaining)) + 1 : 1;
+    int x0 = loom_max_int(clip.x, center.x - dx);
+    int x1 = loom_min_int(clip.x + clip.w, center.x + dx + 1);
+    for (int x = x0; x < x1; ++x) {
+      int coverage =
+          loom_arc_stroke_coverage(x, y, command, inner_radius, outer_radius);
+      loom_write_pixel_coverage(tile, loom, tile_rect, x, y,
+                                command->data.arc.stroke.color, coverage);
+    }
   }
 }
 
@@ -724,16 +929,26 @@ loom_err_t loom_render_tile(loom_t *loom, uint8_t *tile,
           command->data.shape.radius, command->data.shape.stroke.width, visible,
           command->data.shape.stroke.color);
       break;
+    case LOOM_CMD_FILL_CIRCLE:
+      loom_raster_fill_circle(tile, loom, tile_rect,
+                              command->data.circle.center,
+                              command->data.circle.radius, visible,
+                              command->data.circle.color);
+      break;
+    case LOOM_CMD_STROKE_CIRCLE:
+      loom_raster_stroke_circle(tile, loom, tile_rect,
+                                command->data.circle.center,
+                                command->data.circle.radius,
+                                command->data.circle.stroke.width, visible,
+                                command->data.circle.stroke.color);
+      break;
     case LOOM_CMD_LINE:
       loom_raster_draw_line(tile, loom, tile_rect, command->data.line.p0,
                             command->data.line.p1, command->data.line.stroke,
                             visible);
       break;
     case LOOM_CMD_ARC:
-      loom_raster_draw_arc(
-          tile, loom, tile_rect, command->data.arc.center,
-          command->data.arc.radius, command->data.arc.start_degrees,
-          command->data.arc.sweep_degrees, command->data.arc.stroke, visible);
+      loom_raster_draw_arc(tile, loom, tile_rect, command, visible);
       break;
     case LOOM_CMD_BITMAP:
       loom_raster_draw_bitmap(tile, loom, tile_rect, &command->data.bitmap,

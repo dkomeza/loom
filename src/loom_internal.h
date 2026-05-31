@@ -68,6 +68,8 @@ typedef enum {
   LOOM_CMD_STROKE_RECT,
   LOOM_CMD_FILL_ROUND_RECT,
   LOOM_CMD_STROKE_ROUND_RECT,
+  LOOM_CMD_FILL_CIRCLE,
+  LOOM_CMD_STROKE_CIRCLE,
   LOOM_CMD_LINE,
   LOOM_CMD_ARC,
   LOOM_CMD_BITMAP,
@@ -107,8 +109,18 @@ typedef struct {
     struct {
       loom_point_t center;
       uint16_t radius;
+      loom_color_t color;
+      loom_stroke_t stroke;
+    } circle;
+    struct {
+      loom_point_t center;
+      uint16_t radius;
       int16_t start_degrees;
       int16_t sweep_degrees;
+      double start_x;
+      double start_y;
+      double end_x;
+      double end_y;
       loom_stroke_t stroke;
     } arc;
     loom_bitmap_cmd_t bitmap;
