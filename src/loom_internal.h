@@ -65,13 +65,17 @@ extern "C" {
 typedef enum {
   LOOM_CMD_CLEAR,
   LOOM_CMD_FILL_RECT,
+  LOOM_CMD_FILL_RECT_LINEAR_GRADIENT,
   LOOM_CMD_STROKE_RECT,
   LOOM_CMD_FILL_ROUND_RECT,
+  LOOM_CMD_FILL_ROUND_RECT_LINEAR_GRADIENT,
   LOOM_CMD_STROKE_ROUND_RECT,
   LOOM_CMD_FILL_CIRCLE,
+  LOOM_CMD_FILL_CIRCLE_RADIAL_GRADIENT,
   LOOM_CMD_STROKE_CIRCLE,
   LOOM_CMD_LINE,
   LOOM_CMD_ARC,
+  LOOM_CMD_ARC_GRADIENT,
   LOOM_CMD_BITMAP,
   LOOM_CMD_TEXT,
 } loom_command_type_t;
@@ -100,6 +104,7 @@ typedef struct {
       loom_color_t color;
       uint16_t radius;
       loom_stroke_t stroke;
+      loom_linear_gradient_t linear_gradient;
     } shape;
     struct {
       loom_point_t p0;
@@ -111,6 +116,7 @@ typedef struct {
       uint16_t radius;
       loom_color_t color;
       loom_stroke_t stroke;
+      loom_radial_gradient_t radial_gradient;
     } circle;
     struct {
       loom_point_t center;
@@ -122,6 +128,7 @@ typedef struct {
       double end_x;
       double end_y;
       loom_stroke_t stroke;
+      loom_arc_gradient_t gradient;
     } arc;
     loom_bitmap_cmd_t bitmap;
     loom_text_cmd_t text;

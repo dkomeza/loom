@@ -62,6 +62,31 @@ typedef struct {
   loom_color_t color;
 } loom_stroke_t;
 
+typedef struct {
+  loom_point_t p0;
+  loom_point_t p1;
+  loom_color_t color0;
+  loom_color_t color1;
+} loom_linear_gradient_t;
+
+typedef struct {
+  loom_point_t center;
+  uint16_t radius;
+  loom_color_t color0;
+  loom_color_t color1;
+} loom_radial_gradient_t;
+
+typedef enum {
+  LOOM_ARC_GRADIENT_SWEEP = 0,
+  LOOM_ARC_GRADIENT_RADIAL = 1,
+} loom_arc_gradient_mode_t;
+
+typedef struct {
+  loom_arc_gradient_mode_t mode;
+  loom_color_t color0;
+  loom_color_t color1;
+} loom_arc_gradient_t;
+
 typedef enum {
   LOOM_ALLOC_DEFAULT = 0,
   LOOM_ALLOC_INTERNAL = 1,

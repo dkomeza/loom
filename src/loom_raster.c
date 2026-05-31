@@ -13,6 +13,7 @@
 
 #define LOOM_HW_FILL_MIN_PIXELS 1024
 #define LOOM_CURVE_AA_SAMPLES 4
+#define LOOM_GRADIENT_ONE 65535
 
 static size_t loom_align_up_size(size_t value, size_t alignment) {
   return (value + alignment - 1u) & ~(alignment - 1u);
@@ -67,6 +68,69 @@ static uint8_t loom_mul_u8(uint8_t a, uint8_t b) {
 static uint8_t loom_blend_channel(uint8_t src, uint8_t dst, uint8_t alpha) {
   uint16_t inv = (uint16_t)(255u - alpha);
   return (uint8_t)(((uint16_t)src * alpha + (uint16_t)dst * inv + 127u) / 255u);
+}
+
+static int32_t loom_clamp_gradient_t(int64_t t) {
+  if (t <= 0) {
+    return 0;
+  }
+  if (t >= LOOM_GRADIENT_ONE) {
+    return LOOM_GRADIENT_ONE;
+  }
+  return (int32_t)t;
+}
+
+static uint8_t loom_lerp_u8(uint8_t a, uint8_t b, int32_t t) {
+  int32_t inv = LOOM_GRADIENT_ONE - t;
+  return (uint8_t)(((int32_t)a * inv + (int32_t)b * t +
+                    (LOOM_GRADIENT_ONE / 2)) /
+                   LOOM_GRADIENT_ONE);
+}
+
+static loom_color_t loom_lerp_color(loom_color_t a, loom_color_t b,
+                                    int32_t t) {
+  loom_color_t color = {
+      .r = loom_lerp_u8(a.r, b.r, t),
+      .g = loom_lerp_u8(a.g, b.g, t),
+      .b = loom_lerp_u8(a.b, b.b, t),
+      .a = loom_lerp_u8(a.a, b.a, t),
+  };
+  return color;
+}
+
+static loom_color_t
+loom_sample_linear_gradient(const loom_linear_gradient_t *gradient, int x,
+                            int y) {
+  int64_t dx = (int64_t)gradient->p1.x - (int64_t)gradient->p0.x;
+  int64_t dy = (int64_t)gradient->p1.y - (int64_t)gradient->p0.y;
+  int64_t len_sq = dx * dx + dy * dy;
+  if (len_sq <= 0) {
+    return gradient->color1;
+  }
+
+  int64_t px = (int64_t)x - (int64_t)gradient->p0.x;
+  int64_t py = (int64_t)y - (int64_t)gradient->p0.y;
+  int64_t dot = px * dx + py * dy;
+  int64_t t = (dot * LOOM_GRADIENT_ONE + len_sq / 2) / len_sq;
+  return loom_lerp_color(gradient->color0, gradient->color1,
+                         loom_clamp_gradient_t(t));
+}
+
+static loom_color_t
+loom_sample_radial_gradient(const loom_radial_gradient_t *gradient, int x,
+                            int y) {
+  if (gradient->radius == 0) {
+    return gradient->color1;
+  }
+
+  double dx = (double)x - (double)gradient->center.x;
+  double dy = (double)y - (double)gradient->center.y;
+  double distance = sqrt(dx * dx + dy * dy);
+  int64_t t = (int64_t)((distance * (double)LOOM_GRADIENT_ONE) /
+                            (double)gradient->radius +
+                        0.5);
+  return loom_lerp_color(gradient->color0, gradient->color1,
+                         loom_clamp_gradient_t(t));
 }
 
 static uint8_t *loom_tile_pixel(uint8_t *tile, const loom_t *loom,
@@ -247,6 +311,28 @@ static void loom_fill_rect_clipped(uint8_t *tile, const loom_t *loom,
   }
 }
 
+static void loom_fill_span_linear_gradient(
+    uint8_t *tile, const loom_t *loom, loom_rect_t tile_rect, int y, int x0,
+    int x1, const loom_linear_gradient_t *gradient) {
+  if (x1 <= x0) {
+    return;
+  }
+
+  for (int x = x0; x < x1; ++x) {
+    loom_write_pixel(tile, loom, tile_rect, x, y,
+                     loom_sample_linear_gradient(gradient, x, y));
+  }
+}
+
+static void loom_fill_rect_linear_gradient_clipped(
+    uint8_t *tile, const loom_t *loom, loom_rect_t tile_rect, loom_rect_t rect,
+    const loom_linear_gradient_t *gradient) {
+  for (int y = rect.y; y < rect.y + rect.h; ++y) {
+    loom_fill_span_linear_gradient(tile, loom, tile_rect, y, rect.x,
+                                   rect.x + rect.w, gradient);
+  }
+}
+
 static bool loom_point_in_round_rect(int x, int y, loom_rect_t rect,
                                      int radius) {
   if (x < rect.x || y < rect.y || x >= rect.x + rect.w ||
@@ -304,6 +390,41 @@ static void loom_raster_fill_round_rect(uint8_t *tile, const loom_t *loom,
     if (x1 > x0) {
       loom_fill_span(tile, loom, tile_rect, y, x0, x1, color);
     }
+  }
+}
+
+static void loom_raster_fill_round_rect_linear_gradient(
+    uint8_t *tile, const loom_t *loom, loom_rect_t tile_rect, loom_rect_t rect,
+    uint16_t radius, loom_rect_t clip,
+    const loom_linear_gradient_t *gradient) {
+  loom_rect_t visible;
+  if (!loom_rect_intersect(rect, clip, &visible)) {
+    return;
+  }
+
+  int r = loom_min_int(radius, loom_min_int(rect.w, rect.h) / 2);
+  if (r <= 0) {
+    loom_fill_rect_linear_gradient_clipped(tile, loom, tile_rect, visible,
+                                           gradient);
+    return;
+  }
+
+  int64_t radius_sq = (int64_t)r * (int64_t)r;
+  for (int y = visible.y; y < visible.y + visible.h; ++y) {
+    int inset = 0;
+    if (y < rect.y + r || y >= rect.y + rect.h - r) {
+      int cy = y < rect.y + r ? rect.y + r - 1 : rect.y + rect.h - r;
+      int64_t dy = (int64_t)y - (int64_t)cy;
+      int dx = r;
+      while (dx > 0 && (int64_t)dx * (int64_t)dx + dy * dy > radius_sq) {
+        --dx;
+      }
+      inset = loom_max_int(0, r - 1 - dx);
+    }
+
+    int x0 = loom_max_int(visible.x, rect.x + inset);
+    int x1 = loom_min_int(visible.x + visible.w, rect.x + rect.w - inset);
+    loom_fill_span_linear_gradient(tile, loom, tile_rect, y, x0, x1, gradient);
   }
 }
 
@@ -469,6 +590,62 @@ static void loom_raster_fill_circle(uint8_t *tile, const loom_t *loom,
       }
       int coverage = loom_circle_fill_coverage(x, y, center, (double)radius);
       loom_write_pixel_coverage(tile, loom, tile_rect, x, y, color, coverage);
+    }
+  }
+}
+
+static void loom_fill_span_radial_gradient(
+    uint8_t *tile, const loom_t *loom, loom_rect_t tile_rect, int y, int x0,
+    int x1, const loom_radial_gradient_t *gradient) {
+  for (int x = x0; x < x1; ++x) {
+    loom_write_pixel(tile, loom, tile_rect, x, y,
+                     loom_sample_radial_gradient(gradient, x, y));
+  }
+}
+
+static void loom_raster_fill_circle_radial_gradient(
+    uint8_t *tile, const loom_t *loom, loom_rect_t tile_rect,
+    loom_point_t center, uint16_t radius, loom_rect_t clip,
+    const loom_radial_gradient_t *gradient) {
+  if (radius == 0 || gradient->radius == 0) {
+    return;
+  }
+
+  double radius_sq = (double)radius * (double)radius;
+  double inner_radius = radius > 1 ? (double)radius - 0.75 : 0.0;
+  double inner_sq = inner_radius * inner_radius;
+
+  for (int y = clip.y; y < clip.y + clip.h; ++y) {
+    double dy = (double)y - (double)center.y;
+    int fill_x0 = 0;
+    int fill_x1 = 0;
+    if (inner_radius > 0.0 && dy * dy <= inner_sq) {
+      int dx = (int)floor(sqrt(inner_sq - dy * dy));
+      fill_x0 = loom_max_int(clip.x, center.x - dx);
+      fill_x1 = loom_min_int(clip.x + clip.w, center.x + dx + 1);
+      if (fill_x1 > fill_x0) {
+        loom_fill_span_radial_gradient(tile, loom, tile_rect, y, fill_x0,
+                                       fill_x1, gradient);
+      }
+    }
+
+    if (dy * dy > radius_sq + (double)radius + 1.0) {
+      continue;
+    }
+
+    double edge_remaining = radius_sq - dy * dy;
+    int edge_dx = edge_remaining > 0.0 ? (int)ceil(sqrt(edge_remaining)) + 1
+                                       : 1;
+    int edge_x0 = loom_max_int(clip.x, center.x - edge_dx);
+    int edge_x1 = loom_min_int(clip.x + clip.w, center.x + edge_dx + 1);
+    for (int x = edge_x0; x < edge_x1; ++x) {
+      if (fill_x1 > fill_x0 && x >= fill_x0 && x < fill_x1) {
+        continue;
+      }
+      int coverage = loom_circle_fill_coverage(x, y, center, (double)radius);
+      loom_write_pixel_coverage(tile, loom, tile_rect, x, y,
+                                loom_sample_radial_gradient(gradient, x, y),
+                                coverage);
     }
   }
 }
@@ -662,6 +839,50 @@ static bool loom_point_in_arc_sweep(double px, double py,
       command->data.arc.start_x, command->data.arc.start_y, abs_sweep);
 }
 
+static double loom_normalize_degrees(double degrees) {
+  double normalized = fmod(degrees, 360.0);
+  if (normalized < 0.0) {
+    normalized += 360.0;
+  }
+  return normalized;
+}
+
+static loom_color_t loom_sample_arc_gradient(const loom_command_t *command,
+                                             int x, int y,
+                                             double inner_radius,
+                                             double outer_radius) {
+  const loom_arc_gradient_t *gradient = &command->data.arc.gradient;
+  loom_point_t center = command->data.arc.center;
+  double dx = (double)x - (double)center.x;
+  double dy = (double)y - (double)center.y;
+  int64_t t = 0;
+
+  if (gradient->mode == LOOM_ARC_GRADIENT_RADIAL) {
+    double span = outer_radius - inner_radius;
+    double distance = sqrt(dx * dx + dy * dy);
+    t = span > 0.0 ? (int64_t)(((distance - inner_radius) *
+                                (double)LOOM_GRADIENT_ONE) /
+                                   span +
+                               0.5)
+                   : 0;
+  } else {
+    int sweep = command->data.arc.sweep_degrees;
+    int abs_sweep = loom_abs_int(sweep);
+    double angle = loom_normalize_degrees(atan2(dy, dx) * 180.0 / M_PI);
+    double start = loom_normalize_degrees(command->data.arc.start_degrees);
+    double delta = sweep > 0 ? loom_normalize_degrees(angle - start)
+                             : loom_normalize_degrees(start - angle);
+    double denominator = abs_sweep >= 360 ? 360.0 : (double)abs_sweep;
+    t = denominator > 0.0 ? (int64_t)(delta * (double)LOOM_GRADIENT_ONE /
+                                          denominator +
+                                      0.5)
+                          : 0;
+  }
+
+  return loom_lerp_color(gradient->color0, gradient->color1,
+                         loom_clamp_gradient_t(t));
+}
+
 static int loom_arc_stroke_coverage(int x, int y,
                                     const loom_command_t *command,
                                     double inner_radius, double outer_radius) {
@@ -682,6 +903,48 @@ static int loom_arc_stroke_coverage(int x, int y,
     }
   }
   return coverage;
+}
+
+static void loom_raster_draw_arc_gradient(uint8_t *tile, const loom_t *loom,
+                                          loom_rect_t tile_rect,
+                                          const loom_command_t *command,
+                                          loom_rect_t clip) {
+  uint16_t radius = command->data.arc.radius;
+  uint16_t width = command->data.arc.stroke.width;
+  const loom_arc_gradient_t *gradient = &command->data.arc.gradient;
+  if (radius == 0 || width == 0 ||
+      (gradient->color0.a == 0 && gradient->color1.a == 0)) {
+    return;
+  }
+
+  double half_width = (double)width * 0.5;
+  double inner_radius = (double)radius - half_width;
+  double outer_radius = (double)radius + half_width;
+  if (inner_radius < 0.0) {
+    inner_radius = 0.0;
+  }
+
+  double outer_sq = outer_radius * outer_radius;
+  loom_point_t center = command->data.arc.center;
+  for (int y = clip.y; y < clip.y + clip.h; ++y) {
+    double dy = (double)y - (double)center.y;
+    if (dy * dy > outer_sq + outer_radius) {
+      continue;
+    }
+
+    double remaining = outer_sq - dy * dy;
+    int dx = remaining > 0.0 ? (int)ceil(sqrt(remaining)) + 1 : 1;
+    int x0 = loom_max_int(clip.x, center.x - dx);
+    int x1 = loom_min_int(clip.x + clip.w, center.x + dx + 1);
+    for (int x = x0; x < x1; ++x) {
+      int coverage =
+          loom_arc_stroke_coverage(x, y, command, inner_radius, outer_radius);
+      loom_write_pixel_coverage(
+          tile, loom, tile_rect, x, y,
+          loom_sample_arc_gradient(command, x, y, inner_radius, outer_radius),
+          coverage);
+    }
+  }
 }
 
 static void loom_raster_draw_arc(uint8_t *tile, const loom_t *loom,
@@ -913,6 +1176,10 @@ loom_err_t loom_render_tile(loom_t *loom, uint8_t *tile,
       loom_fill_rect_clipped(tile, loom, tile_rect, visible,
                              command->data.shape.color);
       break;
+    case LOOM_CMD_FILL_RECT_LINEAR_GRADIENT:
+      loom_fill_rect_linear_gradient_clipped(
+          tile, loom, tile_rect, visible, &command->data.shape.linear_gradient);
+      break;
     case LOOM_CMD_STROKE_RECT:
       loom_raster_stroke_rect(tile, loom, tile_rect, command->data.shape.rect,
                               command->data.shape.stroke.width, visible,
@@ -922,6 +1189,12 @@ loom_err_t loom_render_tile(loom_t *loom, uint8_t *tile,
       loom_raster_fill_round_rect(
           tile, loom, tile_rect, command->data.shape.rect,
           command->data.shape.radius, visible, command->data.shape.color);
+      break;
+    case LOOM_CMD_FILL_ROUND_RECT_LINEAR_GRADIENT:
+      loom_raster_fill_round_rect_linear_gradient(
+          tile, loom, tile_rect, command->data.shape.rect,
+          command->data.shape.radius, visible,
+          &command->data.shape.linear_gradient);
       break;
     case LOOM_CMD_STROKE_ROUND_RECT:
       loom_raster_stroke_round_rect(
@@ -934,6 +1207,12 @@ loom_err_t loom_render_tile(loom_t *loom, uint8_t *tile,
                               command->data.circle.center,
                               command->data.circle.radius, visible,
                               command->data.circle.color);
+      break;
+    case LOOM_CMD_FILL_CIRCLE_RADIAL_GRADIENT:
+      loom_raster_fill_circle_radial_gradient(
+          tile, loom, tile_rect, command->data.circle.center,
+          command->data.circle.radius, visible,
+          &command->data.circle.radial_gradient);
       break;
     case LOOM_CMD_STROKE_CIRCLE:
       loom_raster_stroke_circle(tile, loom, tile_rect,
@@ -949,6 +1228,9 @@ loom_err_t loom_render_tile(loom_t *loom, uint8_t *tile,
       break;
     case LOOM_CMD_ARC:
       loom_raster_draw_arc(tile, loom, tile_rect, command, visible);
+      break;
+    case LOOM_CMD_ARC_GRADIENT:
+      loom_raster_draw_arc_gradient(tile, loom, tile_rect, command, visible);
       break;
     case LOOM_CMD_BITMAP:
       loom_raster_draw_bitmap(tile, loom, tile_rect, &command->data.bitmap,
