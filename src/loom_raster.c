@@ -202,10 +202,20 @@ static void loom_fill_rect_clipped(uint8_t *tile, const loom_t *loom,
     if (buffer_size <= loom->tile_bytes) {
       loom_rect_t local_rect =
           loom_rect(rect.x - tile_rect.x, rect.y - tile_rect.y, rect.w, rect.h);
-      if (loom->config.hw.fill_rgb888(loom->config.hw.ctx, tile, buffer_size,
+#if LOOM_ENABLE_PERF_LOG
+      int64_t fill_start_us = loom_platform_time_now_us(loom);
+#endif
+      bool fill_ok =
+          loom->config.hw.fill_rgb888(loom->config.hw.ctx, tile, buffer_size,
                                       (uint16_t)tile_rect.w,
                                       (uint16_t)tile_rect.h, local_rect,
-                                      color) == LOOM_OK) {
+                                      color) == LOOM_OK;
+#if LOOM_ENABLE_PERF_LOG
+      loom_perf_record_hw_fill(
+          (loom_t *)loom, fill_ok,
+          loom_platform_time_now_us(loom) - fill_start_us);
+#endif
+      if (fill_ok) {
         return;
       }
     }
@@ -678,10 +688,16 @@ loom_err_t loom_render_tile(loom_t *loom, uint8_t *tile,
 
   for (size_t i = first_command; i < loom->command_count; ++i) {
     const loom_command_t *command = &loom->commands[i];
+#if LOOM_ENABLE_PERF_LOG
+    loom->perf.commands_scanned++;
+#endif
     loom_rect_t visible;
     if (!loom_intersect_command(command, tile_rect, &visible)) {
       continue;
     }
+#if LOOM_ENABLE_PERF_LOG
+    loom->perf.commands_drawn++;
+#endif
 
     switch (command->type) {
     case LOOM_CMD_CLEAR:

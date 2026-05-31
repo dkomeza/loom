@@ -1,0 +1,23 @@
+menu "Loom"
+
+    choice LOOM_PERF_LOG_LEVEL
+        prompt "Performance log level"
+        default LOOM_PERF_LOG_LEVEL_NONE
+        help
+            Controls Loom performance diagnostics at compile time.
+
+            Info enables frame summaries and ESP-IDF setup/heap diagnostics.
+            Debug also enables per-tile render counters, flush timing, and
+            backend hardware-fill traces.
+
+        config LOOM_PERF_LOG_LEVEL_NONE
+            bool "Off"
+
+        config LOOM_PERF_LOG_LEVEL_INFO
+            bool "Info"
+
+        config LOOM_PERF_LOG_LEVEL_DEBUG
+            bool "Debug"
+    endchoice
+
+endmenu

@@ -16,6 +16,52 @@ extern "C" {
 #define LOOM_RGB888_BYTES_PER_PIXEL 3
 #define LOOM_TILE_ALIGNMENT 64
 
+#ifndef LOOM_ENABLE_PERF_LOG
+#define LOOM_ENABLE_PERF_LOG 0
+#endif
+
+#ifndef LOOM_ENABLE_DEBUG_LOG
+#define LOOM_ENABLE_DEBUG_LOG 0
+#endif
+
+#ifndef LOOM_PERF_LOG_LEVEL
+#define LOOM_PERF_LOG_LEVEL LOOM_LOG_DEBUG
+#endif
+
+#ifndef LOOM_DEBUG_LOG_LEVEL
+#define LOOM_DEBUG_LOG_LEVEL LOOM_LOG_DEBUG
+#endif
+
+#if LOOM_ENABLE_PERF_LOG
+#define LOOM_PERF_LOGF(loom, level, tag, fmt, ...) \
+  do {                                             \
+    if ((level) >= LOOM_PERF_LOG_LEVEL) {          \
+      loom_platform_logf((loom), (level), (tag),   \
+                         (fmt), ##__VA_ARGS__);   \
+    }                                              \
+  } while (0)
+#else
+#define LOOM_PERF_LOGF(loom, level, tag, fmt, ...) \
+  do {                                             \
+    (void)(loom);                                  \
+  } while (0)
+#endif
+
+#if LOOM_ENABLE_DEBUG_LOG
+#define LOOM_DEBUG_LOGF(loom, level, tag, fmt, ...) \
+  do {                                              \
+    if ((level) >= LOOM_DEBUG_LOG_LEVEL) {          \
+      loom_platform_logf((loom), (level), (tag),    \
+                         (fmt), ##__VA_ARGS__);    \
+    }                                               \
+  } while (0)
+#else
+#define LOOM_DEBUG_LOGF(loom, level, tag, fmt, ...) \
+  do {                                              \
+    (void)(loom);                                   \
+  } while (0)
+#endif
+
 typedef enum {
   LOOM_CMD_CLEAR,
   LOOM_CMD_FILL_RECT,
@@ -70,6 +116,17 @@ typedef struct {
   } data;
 } loom_command_t;
 
+#if LOOM_ENABLE_PERF_LOG
+typedef struct {
+  uint32_t commands_scanned;
+  uint32_t commands_drawn;
+  uint32_t hw_fill_attempts;
+  uint32_t hw_fill_successes;
+  uint32_t hw_fill_fallbacks;
+  int64_t hw_fill_us;
+} loom_perf_counters_t;
+#endif
+
 struct loom {
   loom_display_config_t config;
   loom_command_t *commands;
@@ -85,6 +142,9 @@ struct loom {
   uint8_t buffer_count;
   size_t tile_stride;
   size_t tile_bytes;
+#if LOOM_ENABLE_PERF_LOG
+  loom_perf_counters_t perf;
+#endif
 };
 
 loom_err_t loom_command_append(loom_t *loom, const loom_command_t *command);
@@ -115,6 +175,19 @@ void loom_platform_free(const loom_t *loom, void *ptr);
 int64_t loom_platform_time_now_us(const loom_t *loom);
 void loom_platform_logf(const loom_t *loom, loom_log_level_t level,
                         const char *tag, const char *fmt, ...);
+
+#if LOOM_ENABLE_PERF_LOG
+void loom_perf_reset(loom_t *loom);
+void loom_perf_record_hw_fill(loom_t *loom, bool success, int64_t elapsed_us);
+#else
+static inline void loom_perf_reset(loom_t *loom) { (void)loom; }
+static inline void loom_perf_record_hw_fill(loom_t *loom, bool success,
+                                            int64_t elapsed_us) {
+  (void)loom;
+  (void)success;
+  (void)elapsed_us;
+}
+#endif
 
 #ifdef __cplusplus
 }

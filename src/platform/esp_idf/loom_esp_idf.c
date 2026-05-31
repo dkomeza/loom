@@ -18,6 +18,22 @@ static const char *TAG = "loom";
 #define LOOM_ESP_IDF_TILE_FALLBACK_CAPS \
   (MALLOC_CAP_SPIRAM | MALLOC_CAP_DMA | MALLOC_CAP_8BIT)
 
+#ifndef LOOM_ENABLE_PERF_LOG
+#define LOOM_ENABLE_PERF_LOG 0
+#endif
+
+#ifndef LOOM_ENABLE_DEBUG_LOG
+#define LOOM_ENABLE_DEBUG_LOG 0
+#endif
+
+#ifndef LOOM_PERF_LOG_LEVEL
+#define LOOM_PERF_LOG_LEVEL 0
+#endif
+
+#ifndef LOOM_DEBUG_LOG_LEVEL
+#define LOOM_DEBUG_LOG_LEVEL 0
+#endif
+
 struct loom_esp_idf {
   esp_lcd_panel_handle_t panel;
   ppa_client_handle_t ppa_fill_client;
@@ -25,6 +41,24 @@ struct loom_esp_idf {
   loom_t *loom;
   bool callbacks_registered;
 };
+
+#if LOOM_ENABLE_PERF_LOG
+static void loom_esp_idf_log_heap(const char *phase) {
+  ESP_LOGI(TAG,
+           "heap %s: internal free=%u largest=%u, dma free=%u largest=%u, "
+           "spiram dma free=%u largest=%u",
+           phase,
+           (unsigned)heap_caps_get_free_size(LOOM_ESP_IDF_INTERNAL_CAPS),
+           (unsigned)heap_caps_get_largest_free_block(
+               LOOM_ESP_IDF_INTERNAL_CAPS),
+           (unsigned)heap_caps_get_free_size(LOOM_ESP_IDF_TILE_FAST_CAPS),
+           (unsigned)heap_caps_get_largest_free_block(
+               LOOM_ESP_IDF_TILE_FAST_CAPS),
+           (unsigned)heap_caps_get_free_size(LOOM_ESP_IDF_TILE_FALLBACK_CAPS),
+           (unsigned)heap_caps_get_largest_free_block(
+               LOOM_ESP_IDF_TILE_FALLBACK_CAPS));
+}
+#endif
 
 static bool IRAM_ATTR loom_esp_idf_color_trans_done_cb(
     esp_lcd_panel_handle_t panel, esp_lcd_dpi_panel_event_data_t *edata,
@@ -118,9 +152,17 @@ static loom_err_t loom_esp_idf_flush_start(void *ctx, const void *pixels,
   while (xSemaphoreTake(backend->trans_done_sem, 0) == pdTRUE) {
   }
 
+#if LOOM_ENABLE_PERF_LOG && LOOM_PERF_LOG_LEVEL <= 0
+  int64_t draw_start_us = esp_timer_get_time();
+#endif
   esp_err_t ret = esp_lcd_panel_draw_bitmap(backend->panel, rect.x, rect.y,
                                             rect.x + rect.w, rect.y + rect.h,
                                             pixels);
+#if LOOM_ENABLE_PERF_LOG && LOOM_PERF_LOG_LEVEL <= 0
+  ESP_LOGD(TAG, "flush start rect=%d,%d %dx%d ret=%s submit=%lld us", rect.x,
+           rect.y, rect.w, rect.h, esp_err_to_name(ret),
+           (long long)(esp_timer_get_time() - draw_start_us));
+#endif
   return ret == ESP_OK ? LOOM_OK : LOOM_ERR_PLATFORM;
 }
 
@@ -130,9 +172,16 @@ static loom_err_t loom_esp_idf_flush_wait(void *ctx) {
     return LOOM_ERR_INVALID_ARG;
   }
 
+#if LOOM_ENABLE_PERF_LOG && LOOM_PERF_LOG_LEVEL <= 0
+  int64_t wait_start_us = esp_timer_get_time();
+#endif
   if (xSemaphoreTake(backend->trans_done_sem, portMAX_DELAY) != pdTRUE) {
     return LOOM_ERR_TIMEOUT;
   }
+#if LOOM_ENABLE_PERF_LOG && LOOM_PERF_LOG_LEVEL <= 0
+  ESP_LOGD(TAG, "flush wait=%lld us",
+           (long long)(esp_timer_get_time() - wait_start_us));
+#endif
   return LOOM_OK;
 }
 
@@ -165,9 +214,12 @@ static loom_err_t loom_esp_idf_fill_rgb888(void *ctx, uint8_t *pixels,
       .mode = PPA_TRANS_MODE_BLOCKING,
   };
 
-  return ppa_do_fill(backend->ppa_fill_client, &config) == ESP_OK
-             ? LOOM_OK
-             : LOOM_ERR_PLATFORM;
+  esp_err_t ret = ppa_do_fill(backend->ppa_fill_client, &config);
+#if LOOM_ENABLE_DEBUG_LOG && LOOM_DEBUG_LOG_LEVEL <= 0
+  ESP_LOGD(TAG, "ppa fill rect=%d,%d %dx%d buffer=%u ret=%s", rect.x, rect.y,
+           rect.w, rect.h, (unsigned)buffer_size, esp_err_to_name(ret));
+#endif
+  return ret == ESP_OK ? LOOM_OK : LOOM_ERR_PLATFORM;
 }
 
 esp_err_t loom_err_to_esp_err(loom_err_t err) {
@@ -199,6 +251,16 @@ esp_err_t loom_esp_idf_create(const loom_esp_idf_config_t *config,
   *out_backend = NULL;
   *out_loom = NULL;
 
+#if LOOM_ENABLE_PERF_LOG
+  ESP_LOGI(TAG,
+           "create esp-idf backend %ux%u format=%d tile_height=%u buffers=%u "
+           "commands=%u",
+           (unsigned)config->width, (unsigned)config->height,
+           (int)config->format, (unsigned)config->tile_height,
+           (unsigned)config->buffer_count, (unsigned)config->command_capacity);
+  loom_esp_idf_log_heap("before create");
+#endif
+
   loom_esp_idf_t *backend =
       heap_caps_calloc(1, sizeof(*backend), LOOM_ESP_IDF_INTERNAL_CAPS);
   if (backend == NULL) {
@@ -221,6 +283,10 @@ esp_err_t loom_esp_idf_create(const loom_esp_idf_config_t *config,
     ESP_LOGW(TAG, "PPA fill unavailable, using CPU fills: %s",
              esp_err_to_name(ppa_ret));
     backend->ppa_fill_client = NULL;
+#if LOOM_ENABLE_PERF_LOG
+  } else {
+    ESP_LOGI(TAG, "PPA fill client registered");
+#endif
   }
 
   esp_lcd_dpi_panel_event_callbacks_t callbacks = {
@@ -272,6 +338,10 @@ esp_err_t loom_esp_idf_create(const loom_esp_idf_config_t *config,
     loom_esp_idf_destroy(backend);
     return loom_err_to_esp_err(loom_ret);
   }
+
+#if LOOM_ENABLE_PERF_LOG
+  loom_esp_idf_log_heap("after create");
+#endif
 
   *out_backend = backend;
   *out_loom = backend->loom;

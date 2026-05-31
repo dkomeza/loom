@@ -36,6 +36,31 @@ static void loom_free_allocations(loom_t *loom) {
   loom->commands = NULL;
 }
 
+#if LOOM_ENABLE_PERF_LOG
+void loom_perf_reset(loom_t *loom) {
+  if (loom == NULL) {
+    return;
+  }
+  memset(&loom->perf, 0, sizeof(loom->perf));
+}
+
+void loom_perf_record_hw_fill(loom_t *loom, bool success, int64_t elapsed_us) {
+  if (loom == NULL) {
+    return;
+  }
+
+  loom->perf.hw_fill_attempts++;
+  if (success) {
+    loom->perf.hw_fill_successes++;
+  } else {
+    loom->perf.hw_fill_fallbacks++;
+  }
+  if (elapsed_us > 0) {
+    loom->perf.hw_fill_us += elapsed_us;
+  }
+}
+#endif
+
 static bool loom_alloc_tile_buffers(loom_t *loom, uint8_t count,
                                     loom_alloc_type_t type) {
   if (loom == NULL || count == 0 || count > 2) {
@@ -194,6 +219,7 @@ loom_err_t loom_begin_frame(loom_t *loom) {
   loom->dirty_valid = false;
   loom->sticky_error = LOOM_OK;
   loom->in_frame = true;
+  loom_perf_reset(loom);
 
   return LOOM_OK;
 }
@@ -229,8 +255,12 @@ loom_err_t loom_end_frame(loom_t *loom) {
       uint8_t *tile = loom->tile_buffers[buffer_index];
 
       int64_t render_start_us = loom_platform_time_now_us(loom);
+#if LOOM_ENABLE_PERF_LOG
+      loom_perf_counters_t tile_perf_start = loom->perf;
+#endif
       ret = loom_render_tile(loom, tile, tile_rect);
-      render_us += loom_platform_time_now_us(loom) - render_start_us;
+      int64_t render_end_us = loom_platform_time_now_us(loom);
+      render_us += render_end_us - render_start_us;
       if (ret != LOOM_OK) {
         break;
       }
@@ -260,6 +290,29 @@ loom_err_t loom_end_frame(loom_t *loom) {
         break;
       }
 
+#if LOOM_ENABLE_PERF_LOG
+      int64_t tile_render_us = render_end_us - render_start_us;
+      loom_perf_counters_t tile_perf = loom->perf;
+      tile_perf.commands_scanned -= tile_perf_start.commands_scanned;
+      tile_perf.commands_drawn -= tile_perf_start.commands_drawn;
+      tile_perf.hw_fill_attempts -= tile_perf_start.hw_fill_attempts;
+      tile_perf.hw_fill_successes -= tile_perf_start.hw_fill_successes;
+      tile_perf.hw_fill_fallbacks -= tile_perf_start.hw_fill_fallbacks;
+      tile_perf.hw_fill_us -= tile_perf_start.hw_fill_us;
+      LOOM_PERF_LOGF(
+          loom, LOOM_LOG_DEBUG, TAG,
+          "tile %u rect=%d,%d %dx%d render=%lld us commands=%u/%u "
+          "hw_fill=%u/%u fallback=%u hw_fill=%lld us",
+          (unsigned)tile_count, tile_rect.x, tile_rect.y, tile_rect.w,
+          tile_rect.h, (long long)tile_render_us,
+          (unsigned)tile_perf.commands_drawn,
+          (unsigned)tile_perf.commands_scanned,
+          (unsigned)tile_perf.hw_fill_successes,
+          (unsigned)tile_perf.hw_fill_attempts,
+          (unsigned)tile_perf.hw_fill_fallbacks,
+          (long long)tile_perf.hw_fill_us);
+#endif
+
       tile_count++;
       buffer_index = (uint8_t)((buffer_index + 1) % loom->buffer_count);
     }
@@ -284,5 +337,18 @@ loom_err_t loom_end_frame(loom_t *loom) {
                      (unsigned)loom->command_count, (unsigned)tile_count,
                      dirty.w, dirty.h, (long long)elapsed_us,
                      (long long)render_us, (long long)flush_us, hz);
+#if LOOM_ENABLE_PERF_LOG
+  LOOM_PERF_LOGF(loom, LOOM_LOG_INFO, TAG,
+                 "frame perf: ret=%d commands drawn/scanned=%u/%u "
+                 "hw_fill=%u/%u fallback=%u hw_fill=%lld us tile_bytes=%u "
+                 "buffers=%u",
+                 (int)ret, (unsigned)loom->perf.commands_drawn,
+                 (unsigned)loom->perf.commands_scanned,
+                 (unsigned)loom->perf.hw_fill_successes,
+                 (unsigned)loom->perf.hw_fill_attempts,
+                 (unsigned)loom->perf.hw_fill_fallbacks,
+                 (long long)loom->perf.hw_fill_us,
+                 (unsigned)loom->tile_bytes, (unsigned)loom->buffer_count);
+#endif
   return ret;
 }

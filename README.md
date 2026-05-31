@@ -34,12 +34,31 @@ The ESP-IDF adapter owns the DPI transfer callback registration, transfer
 completion semaphore, ESP heap allocation hooks, and optional PPA fill
 acceleration. Destroy it with `loom_esp_idf_destroy()`.
 
+## Performance Logging
+
+Additional performance diagnostics are compiled out by default. In ESP-IDF
+builds, enable them with `menuconfig` under `Component config > Loom >
+Performance log level`.
+
+`Info` enables frame summaries and ESP-IDF setup/heap diagnostics. `Debug` also
+enables per-tile command and hardware-fill counters, bitmap submit latency,
+transfer wait time, and backend PPA fill traces. ESP32-P4 ESP-IDF builds
+additionally define `LOOM_ENABLE_ESP32P4=1` so platform-specific diagnostics
+can be guarded explicitly.
+
 ## Portable Build
 
 ```sh
 cmake -S . -B build
 cmake --build build
 ctest --test-dir build
+```
+
+For a portable performance-log build:
+
+```sh
+cmake -S . -B build-perf -DLOOM_ENABLE_PERF_LOG=ON -DLOOM_PERF_LOG_LEVEL=INFO
+cmake --build build-perf
 ```
 
 Portable builds use libc allocation and a caller-provided flush callback.
