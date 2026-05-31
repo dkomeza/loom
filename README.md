@@ -8,6 +8,12 @@ The core API is platform-neutral. Callers provide display geometry, allocation
 hooks, a monotonic clock/logging hook if desired, and flush callbacks. Display
 hardware initialization stays outside Loom.
 
+## API Documentation
+
+For a quick, implementation-aligned reference to the public C API, frame
+lifecycle, callback contracts, draw commands, fonts, bitmaps, gradients, and
+ESP-IDF adapter, see [docs/api.md](docs/api.md).
+
 ## Backends
 
 The ESP-IDF backend is available when the library is built as an ESP-IDF
