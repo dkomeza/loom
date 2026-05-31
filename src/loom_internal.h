@@ -78,6 +78,7 @@ typedef enum {
   LOOM_CMD_ARC_GRADIENT,
   LOOM_CMD_BITMAP,
   LOOM_CMD_TEXT,
+  LOOM_CMD_COUNT,
 } loom_command_type_t;
 
 typedef struct {
@@ -143,6 +144,8 @@ typedef struct {
   uint32_t hw_fill_successes;
   uint32_t hw_fill_fallbacks;
   int64_t hw_fill_us;
+  uint32_t command_type_drawn[LOOM_CMD_COUNT];
+  int64_t command_type_us[LOOM_CMD_COUNT];
 } loom_perf_counters_t;
 #endif
 
@@ -198,12 +201,21 @@ void loom_platform_logf(const loom_t *loom, loom_log_level_t level,
 #if LOOM_ENABLE_PERF_LOG
 void loom_perf_reset(loom_t *loom);
 void loom_perf_record_hw_fill(loom_t *loom, bool success, int64_t elapsed_us);
+void loom_perf_record_command(loom_t *loom, loom_command_type_t type,
+                              int64_t elapsed_us);
 #else
 static inline void loom_perf_reset(loom_t *loom) { (void)loom; }
 static inline void loom_perf_record_hw_fill(loom_t *loom, bool success,
                                             int64_t elapsed_us) {
   (void)loom;
   (void)success;
+  (void)elapsed_us;
+}
+static inline void loom_perf_record_command(loom_t *loom,
+                                            loom_command_type_t type,
+                                            int64_t elapsed_us) {
+  (void)loom;
+  (void)type;
   (void)elapsed_us;
 }
 #endif
