@@ -1165,6 +1165,7 @@ loom_err_t loom_render_tile(loom_t *loom, uint8_t *tile,
     }
 #if LOOM_ENABLE_PERF_LOG
     loom->perf.commands_drawn++;
+    int64_t command_start_us = loom_platform_time_now_us(loom);
 #endif
 
     switch (command->type) {
@@ -1243,6 +1244,11 @@ loom_err_t loom_render_tile(loom_t *loom, uint8_t *tile,
     default:
       break;
     }
+
+#if LOOM_ENABLE_PERF_LOG
+    loom_perf_record_command(
+        loom, command->type, loom_platform_time_now_us(loom) - command_start_us);
+#endif
   }
 
   return LOOM_OK;

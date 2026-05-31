@@ -59,6 +59,58 @@ void loom_perf_record_hw_fill(loom_t *loom, bool success, int64_t elapsed_us) {
     loom->perf.hw_fill_us += elapsed_us;
   }
 }
+
+void loom_perf_record_command(loom_t *loom, loom_command_type_t type,
+                              int64_t elapsed_us) {
+  if (loom == NULL || type < 0 || type >= LOOM_CMD_COUNT) {
+    return;
+  }
+
+  loom->perf.command_type_drawn[type]++;
+  if (elapsed_us > 0) {
+    loom->perf.command_type_us[type] += elapsed_us;
+  }
+}
+#endif
+
+#if LOOM_ENABLE_PERF_LOG
+static const char *loom_command_type_name(loom_command_type_t type) {
+  switch (type) {
+  case LOOM_CMD_CLEAR:
+    return "clear";
+  case LOOM_CMD_FILL_RECT:
+    return "fill_rect";
+  case LOOM_CMD_FILL_RECT_LINEAR_GRADIENT:
+    return "fill_rect_linear_gradient";
+  case LOOM_CMD_STROKE_RECT:
+    return "stroke_rect";
+  case LOOM_CMD_FILL_ROUND_RECT:
+    return "fill_round_rect";
+  case LOOM_CMD_FILL_ROUND_RECT_LINEAR_GRADIENT:
+    return "fill_round_rect_linear_gradient";
+  case LOOM_CMD_STROKE_ROUND_RECT:
+    return "stroke_round_rect";
+  case LOOM_CMD_FILL_CIRCLE:
+    return "fill_circle";
+  case LOOM_CMD_FILL_CIRCLE_RADIAL_GRADIENT:
+    return "fill_circle_radial_gradient";
+  case LOOM_CMD_STROKE_CIRCLE:
+    return "stroke_circle";
+  case LOOM_CMD_LINE:
+    return "line";
+  case LOOM_CMD_ARC:
+    return "arc";
+  case LOOM_CMD_ARC_GRADIENT:
+    return "arc_gradient";
+  case LOOM_CMD_BITMAP:
+    return "bitmap";
+  case LOOM_CMD_TEXT:
+    return "text";
+  case LOOM_CMD_COUNT:
+  default:
+    return "unknown";
+  }
+}
 #endif
 
 static bool loom_alloc_tile_buffers(loom_t *loom, uint8_t count,
@@ -349,6 +401,18 @@ loom_err_t loom_end_frame(loom_t *loom) {
                  (unsigned)loom->perf.hw_fill_fallbacks,
                  (long long)loom->perf.hw_fill_us,
                  (unsigned)loom->tile_bytes, (unsigned)loom->buffer_count);
+  for (loom_command_type_t type = 0; type < LOOM_CMD_COUNT; ++type) {
+    if (loom->perf.command_type_drawn[type] == 0) {
+      continue;
+    }
+    LOOM_PERF_LOGF(loom, LOOM_LOG_INFO, TAG,
+                   "command perf: %s drawn=%u total=%lld us avg=%lld us",
+                   loom_command_type_name(type),
+                   (unsigned)loom->perf.command_type_drawn[type],
+                   (long long)loom->perf.command_type_us[type],
+                   (long long)(loom->perf.command_type_us[type] /
+                               loom->perf.command_type_drawn[type]));
+  }
 #endif
   return ret;
 }
