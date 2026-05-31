@@ -80,6 +80,27 @@ static int pixel_is_not_color(const smoke_ctx_t *smoke, int x, int y,
   return !pixel_is_color(smoke, x, y, r, g, b);
 }
 
+static int pixel_channel_between(const smoke_ctx_t *smoke, int x, int y,
+                                 int channel, uint8_t min, uint8_t max) {
+  const uint8_t *pixel = pixel_at(smoke, x, y);
+  return pixel[channel] >= min && pixel[channel] <= max;
+}
+
+static int pixel_only_channel_between(const smoke_ctx_t *smoke, int x, int y,
+                                      int channel, uint8_t min, uint8_t max) {
+  const uint8_t *pixel = pixel_at(smoke, x, y);
+  for (int i = 0; i < TEST_BYTES_PER_PIXEL; ++i) {
+    if (i == channel) {
+      if (pixel[i] < min || pixel[i] > max) {
+        return 0;
+      }
+    } else if (pixel[i] != 0) {
+      return 0;
+    }
+  }
+  return 1;
+}
+
 static int expect_ok(loom_err_t ret, const char *message) {
   if (ret != LOOM_OK) {
     fprintf(stderr, "%s ret=%d\n", message, (int)ret);
@@ -114,6 +135,167 @@ static int test_basic_flush(void) {
             "unexpected basic result ret=%d flush=%u wait=%u bytes=%u\n",
             (int)ret, (unsigned)smoke.flush_count, (unsigned)smoke.wait_count,
             (unsigned)smoke.pixel_bytes);
+  }
+  loom_destroy(loom);
+  return ok;
+}
+
+static int test_gradient_validation(void) {
+  smoke_ctx_t smoke = {0};
+  loom_display_config_t config = smoke_config(&smoke);
+  loom_t *loom = NULL;
+  if (!expect_ok(loom_create(&config, &loom), "loom_create")) {
+    return 0;
+  }
+  if (!expect_ok(loom_begin_frame(loom), "loom_begin_frame")) {
+    loom_destroy(loom);
+    return 0;
+  }
+
+  loom_linear_gradient_t linear = {
+      .p0 = {0, 0},
+      .p1 = {10, 0},
+      .color0 = loom_rgb(0, 0, 0),
+      .color1 = loom_rgb(255, 255, 255),
+  };
+  loom_radial_gradient_t radial = {
+      .center = {10, 10},
+      .radius = 8,
+      .color0 = loom_rgb(0, 0, 0),
+      .color1 = loom_rgb(255, 255, 255),
+  };
+  loom_radial_gradient_t radial_zero = radial;
+  radial_zero.radius = 0;
+  loom_arc_gradient_t arc = {
+      .mode = LOOM_ARC_GRADIENT_SWEEP,
+      .color0 = loom_rgb(0, 0, 0),
+      .color1 = loom_rgb(255, 255, 255),
+  };
+  loom_stroke_t stroke = {.width = 3, .color = loom_rgb(1, 2, 3)};
+
+  int ok = loom_fill_rect_linear_gradient(loom, loom_rect(1, 1, 8, 8),
+                                          NULL) == LOOM_ERR_INVALID_ARG &&
+           loom_fill_round_rect_linear_gradient(
+               loom, loom_rect(1, 1, 8, 8), 2,
+               NULL) == LOOM_ERR_INVALID_ARG &&
+           loom_fill_circle_radial_gradient(loom, (loom_point_t){10, 10}, 4,
+                                            NULL) == LOOM_ERR_INVALID_ARG &&
+           loom_fill_circle_radial_gradient(
+               loom, (loom_point_t){10, 10}, 0,
+               &radial) == LOOM_ERR_INVALID_ARG &&
+           loom_fill_circle_radial_gradient(
+               loom, (loom_point_t){10, 10}, 4,
+               &radial_zero) == LOOM_ERR_INVALID_ARG &&
+           loom_draw_arc_gradient(loom, (loom_point_t){10, 10}, 4, 0, 90,
+                                  &stroke, NULL) == LOOM_ERR_INVALID_ARG &&
+           loom_draw_arc_gradient(loom, (loom_point_t){10, 10}, 4, 0, 0,
+                                  &stroke, &arc) == LOOM_ERR_INVALID_ARG &&
+           loom_fill_rect_linear_gradient(loom, loom_rect(1, 1, 8, 8),
+                                          &linear) == LOOM_OK;
+
+  loom_destroy(loom);
+  if (!ok) {
+    fprintf(stderr, "gradient validation failed\n");
+  }
+  return ok;
+}
+
+static int test_fill_rect_linear_gradient_pixels(void) {
+  smoke_ctx_t smoke = {0};
+  loom_display_config_t config = smoke_config(&smoke);
+  loom_t *loom = NULL;
+  if (!expect_ok(loom_create(&config, &loom), "loom_create")) {
+    return 0;
+  }
+
+  loom_linear_gradient_t gradient = {
+      .p0 = {4, 4},
+      .p1 = {13, 4},
+      .color0 = loom_rgb(200, 0, 0),
+      .color1 = loom_rgb(0, 0, 200),
+  };
+  loom_err_t ret = loom_begin_frame(loom);
+  if (ret == LOOM_OK) {
+    ret = loom_fill_rect_linear_gradient(loom, loom_rect(4, 4, 10, 4),
+                                         &gradient);
+  }
+  if (ret == LOOM_OK) {
+    ret = loom_end_frame(loom);
+  }
+
+  int ok = ret == LOOM_OK && pixel_is_color(&smoke, 4, 4, 200, 0, 0) &&
+           pixel_is_color(&smoke, 13, 4, 0, 0, 200) &&
+           pixel_channel_between(&smoke, 9, 4, 0, 80, 100) &&
+           pixel_channel_between(&smoke, 9, 4, 2, 100, 120);
+  if (!ok) {
+    fprintf(stderr, "linear rect gradient test failed ret=%d\n", (int)ret);
+  }
+  loom_destroy(loom);
+  return ok;
+}
+
+static int test_fill_round_rect_linear_gradient_pixels(void) {
+  smoke_ctx_t smoke = {0};
+  loom_display_config_t config = smoke_config(&smoke);
+  loom_t *loom = NULL;
+  if (!expect_ok(loom_create(&config, &loom), "loom_create")) {
+    return 0;
+  }
+
+  loom_linear_gradient_t gradient = {
+      .p0 = {10, 10},
+      .p1 = {29, 10},
+      .color0 = loom_rgb(0, 180, 0),
+      .color1 = loom_rgb(0, 0, 180),
+  };
+  loom_err_t ret = loom_begin_frame(loom);
+  if (ret == LOOM_OK) {
+    ret = loom_fill_round_rect_linear_gradient(
+        loom, loom_rect(10, 10, 20, 12), 5, &gradient);
+  }
+  if (ret == LOOM_OK) {
+    ret = loom_end_frame(loom);
+  }
+
+  int ok = ret == LOOM_OK && pixel_is_color(&smoke, 10, 10, 0, 0, 0) &&
+           pixel_is_not_color(&smoke, 20, 16, 0, 0, 0);
+  if (!ok) {
+    fprintf(stderr, "round rect gradient test failed ret=%d\n", (int)ret);
+  }
+  loom_destroy(loom);
+  return ok;
+}
+
+static int test_fill_circle_radial_gradient_pixels(void) {
+  smoke_ctx_t smoke = {0};
+  loom_display_config_t config = smoke_config(&smoke);
+  loom_t *loom = NULL;
+  if (!expect_ok(loom_create(&config, &loom), "loom_create")) {
+    return 0;
+  }
+
+  loom_radial_gradient_t gradient = {
+      .center = {20, 20},
+      .radius = 6,
+      .color0 = loom_rgba(200, 0, 0, 128),
+      .color1 = loom_rgba(0, 0, 200, 128),
+  };
+  loom_err_t ret = loom_begin_frame(loom);
+  if (ret == LOOM_OK) {
+    ret = loom_clear(loom, loom_rgb(0, 0, 0));
+  }
+  if (ret == LOOM_OK) {
+    ret = loom_fill_circle_radial_gradient(loom, (loom_point_t){20, 20}, 6,
+                                           &gradient);
+  }
+  if (ret == LOOM_OK) {
+    ret = loom_end_frame(loom);
+  }
+
+  int ok = ret == LOOM_OK && pixel_is_color(&smoke, 20, 20, 100, 0, 0) &&
+           pixel_channel_between(&smoke, 25, 20, 2, 75, 95);
+  if (!ok) {
+    fprintf(stderr, "radial circle gradient test failed ret=%d\n", (int)ret);
   }
   loom_destroy(loom);
   return ok;
@@ -243,10 +425,87 @@ static int test_arc_pixels_and_clip(void) {
   return ok;
 }
 
+static int test_arc_sweep_gradient_pixels(void) {
+  smoke_ctx_t smoke = {0};
+  loom_display_config_t config = smoke_config(&smoke);
+  loom_t *loom = NULL;
+  if (!expect_ok(loom_create(&config, &loom), "loom_create")) {
+    return 0;
+  }
+
+  loom_stroke_t stroke = {.width = 5, .color = loom_rgb(0, 0, 0)};
+  loom_arc_gradient_t gradient = {
+      .mode = LOOM_ARC_GRADIENT_SWEEP,
+      .color0 = loom_rgb(210, 0, 0),
+      .color1 = loom_rgb(0, 0, 210),
+  };
+  loom_err_t ret = loom_begin_frame(loom);
+  if (ret == LOOM_OK) {
+    ret = loom_clear(loom, loom_rgb(0, 0, 0));
+  }
+  if (ret == LOOM_OK) {
+    ret = loom_draw_arc_gradient(loom, (loom_point_t){24, 24}, 8, 0, 90,
+                                 &stroke, &gradient);
+  }
+  if (ret == LOOM_OK) {
+    ret = loom_end_frame(loom);
+  }
+
+  int ok = ret == LOOM_OK &&
+           pixel_only_channel_between(&smoke, 32, 24, 0, 100, 210) &&
+           pixel_only_channel_between(&smoke, 24, 32, 2, 100, 210);
+  if (!ok) {
+    fprintf(stderr, "arc sweep gradient test failed ret=%d\n", (int)ret);
+  }
+  loom_destroy(loom);
+  return ok;
+}
+
+static int test_arc_radial_gradient_pixels(void) {
+  smoke_ctx_t smoke = {0};
+  loom_display_config_t config = smoke_config(&smoke);
+  loom_t *loom = NULL;
+  if (!expect_ok(loom_create(&config, &loom), "loom_create")) {
+    return 0;
+  }
+
+  loom_stroke_t stroke = {.width = 6, .color = loom_rgb(0, 0, 0)};
+  loom_arc_gradient_t gradient = {
+      .mode = LOOM_ARC_GRADIENT_RADIAL,
+      .color0 = loom_rgb(0, 220, 0),
+      .color1 = loom_rgb(0, 0, 220),
+  };
+  loom_err_t ret = loom_begin_frame(loom);
+  if (ret == LOOM_OK) {
+    ret = loom_clear(loom, loom_rgb(0, 0, 0));
+  }
+  if (ret == LOOM_OK) {
+    ret = loom_draw_arc_gradient(loom, (loom_point_t){24, 24}, 10, 0, 90,
+                                 &stroke, &gradient);
+  }
+  if (ret == LOOM_OK) {
+    ret = loom_end_frame(loom);
+  }
+
+  int ok = ret == LOOM_OK &&
+           pixel_channel_between(&smoke, 29, 29, 1, 150, 220) &&
+           pixel_channel_between(&smoke, 33, 33, 2, 150, 220);
+  if (!ok) {
+    fprintf(stderr, "arc radial gradient test failed ret=%d\n", (int)ret);
+  }
+  loom_destroy(loom);
+  return ok;
+}
+
 int main(void) {
-  if (!test_basic_flush() || !test_circle_validation() ||
+  if (!test_basic_flush() || !test_gradient_validation() ||
+      !test_fill_rect_linear_gradient_pixels() ||
+      !test_fill_round_rect_linear_gradient_pixels() ||
+      !test_fill_circle_radial_gradient_pixels() || !test_circle_validation() ||
       !test_fill_circle_pixels_and_dirty_tile() ||
-      !test_stroke_circle_pixels() || !test_arc_pixels_and_clip()) {
+      !test_stroke_circle_pixels() || !test_arc_pixels_and_clip() ||
+      !test_arc_sweep_gradient_pixels() ||
+      !test_arc_radial_gradient_pixels()) {
     return 1;
   }
   return 0;

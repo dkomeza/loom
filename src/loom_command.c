@@ -80,6 +80,12 @@ static bool loom_stroke_is_valid(const loom_stroke_t *stroke) {
   return stroke != NULL && stroke->width > 0;
 }
 
+static bool loom_arc_gradient_is_valid(const loom_arc_gradient_t *gradient) {
+  return gradient != NULL &&
+         (gradient->mode == LOOM_ARC_GRADIENT_SWEEP ||
+          gradient->mode == LOOM_ARC_GRADIENT_RADIAL);
+}
+
 static loom_rect_t loom_rect_normalized_from_points(loom_point_t p0,
                                                     loom_point_t p1) {
   int64_t left = loom_min_i64(p0.x, p1.x);
@@ -426,6 +432,24 @@ loom_err_t loom_fill_rect(loom_t *loom, loom_rect_t rect, loom_color_t color) {
   return loom_command_append(loom, &command);
 }
 
+loom_err_t loom_fill_rect_linear_gradient(
+    loom_t *loom, loom_rect_t rect, const loom_linear_gradient_t *gradient) {
+  loom_err_t ret = loom_require_frame(loom);
+  if (ret != LOOM_OK) {
+    return ret;
+  }
+  if (!loom_rect_is_valid(rect) || gradient == NULL) {
+    return LOOM_ERR_INVALID_ARG;
+  }
+
+  loom_command_t command = {
+      .type = LOOM_CMD_FILL_RECT_LINEAR_GRADIENT,
+      .bounds = rect,
+      .data.shape = {.rect = rect, .linear_gradient = *gradient},
+  };
+  return loom_command_append(loom, &command);
+}
+
 loom_err_t loom_stroke_rect(loom_t *loom, loom_rect_t rect,
                             const loom_stroke_t *stroke) {
   loom_err_t ret = loom_require_frame(loom);
@@ -458,6 +482,26 @@ loom_err_t loom_fill_round_rect(loom_t *loom, loom_rect_t rect, uint16_t radius,
       .type = LOOM_CMD_FILL_ROUND_RECT,
       .bounds = rect,
       .data.shape = {.rect = rect, .color = color, .radius = radius},
+  };
+  return loom_command_append(loom, &command);
+}
+
+loom_err_t loom_fill_round_rect_linear_gradient(
+    loom_t *loom, loom_rect_t rect, uint16_t radius,
+    const loom_linear_gradient_t *gradient) {
+  loom_err_t ret = loom_require_frame(loom);
+  if (ret != LOOM_OK) {
+    return ret;
+  }
+  if (!loom_rect_is_valid(rect) || gradient == NULL) {
+    return LOOM_ERR_INVALID_ARG;
+  }
+
+  loom_command_t command = {
+      .type = LOOM_CMD_FILL_ROUND_RECT_LINEAR_GRADIENT,
+      .bounds = rect,
+      .data.shape = {
+          .rect = rect, .radius = radius, .linear_gradient = *gradient},
   };
   return loom_command_append(loom, &command);
 }
@@ -495,6 +539,27 @@ loom_err_t loom_fill_circle(loom_t *loom, loom_point_t center, uint16_t radius,
       .type = LOOM_CMD_FILL_CIRCLE,
       .bounds = loom_circle_bounds(center, radius, 0),
       .data.circle = {.center = center, .radius = radius, .color = color},
+  };
+  return loom_command_append(loom, &command);
+}
+
+loom_err_t loom_fill_circle_radial_gradient(
+    loom_t *loom, loom_point_t center, uint16_t radius,
+    const loom_radial_gradient_t *gradient) {
+  loom_err_t ret = loom_require_frame(loom);
+  if (ret != LOOM_OK) {
+    return ret;
+  }
+  if (radius == 0 || gradient == NULL || gradient->radius == 0) {
+    return LOOM_ERR_INVALID_ARG;
+  }
+
+  loom_command_t command = {
+      .type = LOOM_CMD_FILL_CIRCLE_RADIAL_GRADIENT,
+      .bounds = loom_circle_bounds(center, radius, 0),
+      .data.circle = {.center = center,
+                      .radius = radius,
+                      .radial_gradient = *gradient},
   };
   return loom_command_append(loom, &command);
 }
@@ -571,6 +636,45 @@ loom_err_t loom_draw_arc(loom_t *loom, loom_point_t center, uint16_t radius,
                    .end_x = end_x,
                    .end_y = end_y,
                    .stroke = *stroke},
+  };
+  return loom_command_append(loom, &command);
+}
+
+loom_err_t loom_draw_arc_gradient(loom_t *loom, loom_point_t center,
+                                  uint16_t radius, int16_t start_degrees,
+                                  int16_t sweep_degrees,
+                                  const loom_stroke_t *stroke,
+                                  const loom_arc_gradient_t *gradient) {
+  loom_err_t ret = loom_require_frame(loom);
+  if (ret != LOOM_OK) {
+    return ret;
+  }
+  if (radius == 0 || sweep_degrees == 0 || !loom_stroke_is_valid(stroke) ||
+      !loom_arc_gradient_is_valid(gradient)) {
+    return LOOM_ERR_INVALID_ARG;
+  }
+
+  uint16_t outset = (uint16_t)((stroke->width + 1u) / 2u + 1u);
+  double start_x = 0.0;
+  double start_y = 0.0;
+  double end_x = 0.0;
+  double end_y = 0.0;
+  loom_angle_to_unit(start_degrees, &start_x, &start_y);
+  loom_angle_to_unit((int)start_degrees + (int)sweep_degrees, &end_x, &end_y);
+
+  loom_command_t command = {
+      .type = LOOM_CMD_ARC_GRADIENT,
+      .bounds = loom_circle_bounds(center, radius, outset),
+      .data.arc = {.center = center,
+                   .radius = radius,
+                   .start_degrees = start_degrees,
+                   .sweep_degrees = sweep_degrees,
+                   .start_x = start_x,
+                   .start_y = start_y,
+                   .end_x = end_x,
+                   .end_y = end_y,
+                   .stroke = *stroke,
+                   .gradient = *gradient},
   };
   return loom_command_append(loom, &command);
 }

@@ -22,15 +22,23 @@ loom_err_t loom_pop_clip(loom_t *loom);
 
 loom_err_t loom_clear(loom_t *loom, loom_color_t color);
 loom_err_t loom_fill_rect(loom_t *loom, loom_rect_t rect, loom_color_t color);
+loom_err_t loom_fill_rect_linear_gradient(
+    loom_t *loom, loom_rect_t rect, const loom_linear_gradient_t *gradient);
 loom_err_t loom_stroke_rect(loom_t *loom, loom_rect_t rect,
                             const loom_stroke_t *stroke);
 loom_err_t loom_fill_round_rect(loom_t *loom, loom_rect_t rect, uint16_t radius,
                                 loom_color_t color);
+loom_err_t loom_fill_round_rect_linear_gradient(
+    loom_t *loom, loom_rect_t rect, uint16_t radius,
+    const loom_linear_gradient_t *gradient);
 loom_err_t loom_stroke_round_rect(loom_t *loom, loom_rect_t rect,
                                   uint16_t radius,
                                   const loom_stroke_t *stroke);
 loom_err_t loom_fill_circle(loom_t *loom, loom_point_t center, uint16_t radius,
                             loom_color_t color);
+loom_err_t loom_fill_circle_radial_gradient(
+    loom_t *loom, loom_point_t center, uint16_t radius,
+    const loom_radial_gradient_t *gradient);
 loom_err_t loom_stroke_circle(loom_t *loom, loom_point_t center,
                               uint16_t radius, const loom_stroke_t *stroke);
 loom_err_t loom_draw_line(loom_t *loom, loom_point_t p0, loom_point_t p1,
@@ -38,6 +46,11 @@ loom_err_t loom_draw_line(loom_t *loom, loom_point_t p0, loom_point_t p1,
 loom_err_t loom_draw_arc(loom_t *loom, loom_point_t center, uint16_t radius,
                          int16_t start_degrees, int16_t sweep_degrees,
                          const loom_stroke_t *stroke);
+loom_err_t loom_draw_arc_gradient(loom_t *loom, loom_point_t center,
+                                  uint16_t radius, int16_t start_degrees,
+                                  int16_t sweep_degrees,
+                                  const loom_stroke_t *stroke,
+                                  const loom_arc_gradient_t *gradient);
 loom_err_t loom_draw_bitmap(loom_t *loom, loom_rect_t dst,
                             const loom_bitmap_t *bitmap, loom_color_t tint);
 loom_err_t loom_draw_text(loom_t *loom, const loom_font_t *font,
