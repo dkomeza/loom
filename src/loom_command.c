@@ -1,8 +1,13 @@
 #include "loom_internal.h"
 
 #include <limits.h>
+#include <math.h>
 #include <stdint.h>
 #include <string.h>
+
+#ifndef M_PI
+#define M_PI 3.14159265358979323846
+#endif
 
 static int64_t loom_min_i64(int64_t a, int64_t b) { return a < b ? a : b; }
 static int64_t loom_max_i64(int64_t a, int64_t b) { return a > b ? a : b; }
@@ -94,6 +99,21 @@ static loom_rect_t loom_rect_outset(loom_rect_t rect, uint16_t amount) {
                                   (int64_t)rect.y - outset,
                                   loom_rect_right_i64(rect) + outset,
                                   loom_rect_bottom_i64(rect) + outset);
+}
+
+static loom_rect_t loom_circle_bounds(loom_point_t center, uint16_t radius,
+                                      uint16_t outset) {
+  int64_t extent = (int64_t)radius + (int64_t)outset + 1;
+  return loom_rect_from_edges_i64((int64_t)center.x - extent,
+                                  (int64_t)center.y - extent,
+                                  (int64_t)center.x + extent + 1,
+                                  (int64_t)center.y + extent + 1);
+}
+
+static void loom_angle_to_unit(int degrees, double *out_x, double *out_y) {
+  double radians = (double)degrees * M_PI / 180.0;
+  *out_x = cos(radians);
+  *out_y = sin(radians);
 }
 
 static const loom_glyph_t *loom_find_glyph(const loom_font_t *font,
@@ -461,6 +481,45 @@ loom_err_t loom_stroke_round_rect(loom_t *loom, loom_rect_t rect,
   return loom_command_append(loom, &command);
 }
 
+loom_err_t loom_fill_circle(loom_t *loom, loom_point_t center, uint16_t radius,
+                            loom_color_t color) {
+  loom_err_t ret = loom_require_frame(loom);
+  if (ret != LOOM_OK) {
+    return ret;
+  }
+  if (radius == 0) {
+    return LOOM_ERR_INVALID_ARG;
+  }
+
+  loom_command_t command = {
+      .type = LOOM_CMD_FILL_CIRCLE,
+      .bounds = loom_circle_bounds(center, radius, 0),
+      .data.circle = {.center = center, .radius = radius, .color = color},
+  };
+  return loom_command_append(loom, &command);
+}
+
+loom_err_t loom_stroke_circle(loom_t *loom, loom_point_t center,
+                              uint16_t radius,
+                              const loom_stroke_t *stroke) {
+  loom_err_t ret = loom_require_frame(loom);
+  if (ret != LOOM_OK) {
+    return ret;
+  }
+  if (radius == 0 || !loom_stroke_is_valid(stroke)) {
+    return LOOM_ERR_INVALID_ARG;
+  }
+
+  uint16_t outset = (uint16_t)((stroke->width + 1u) / 2u + 1u);
+  loom_command_t command = {
+      .type = LOOM_CMD_STROKE_CIRCLE,
+      .bounds = loom_circle_bounds(center, radius, outset),
+      .data.circle = {
+          .center = center, .radius = radius, .stroke = *stroke},
+  };
+  return loom_command_append(loom, &command);
+}
+
 loom_err_t loom_draw_line(loom_t *loom, loom_point_t p0, loom_point_t p1,
                           const loom_stroke_t *stroke) {
   loom_err_t ret = loom_require_frame(loom);
@@ -492,17 +551,25 @@ loom_err_t loom_draw_arc(loom_t *loom, loom_point_t center, uint16_t radius,
     return LOOM_ERR_INVALID_ARG;
   }
 
-  int64_t extent = (int64_t)radius + stroke->width;
-  loom_rect_t bounds = loom_rect_from_edges_i64(
-      (int64_t)center.x - extent, (int64_t)center.y - extent,
-      (int64_t)center.x + extent + 1, (int64_t)center.y + extent + 1);
+  uint16_t outset = (uint16_t)((stroke->width + 1u) / 2u + 1u);
+  double start_x = 0.0;
+  double start_y = 0.0;
+  double end_x = 0.0;
+  double end_y = 0.0;
+  loom_angle_to_unit(start_degrees, &start_x, &start_y);
+  loom_angle_to_unit((int)start_degrees + (int)sweep_degrees, &end_x, &end_y);
+
   loom_command_t command = {
       .type = LOOM_CMD_ARC,
-      .bounds = bounds,
+      .bounds = loom_circle_bounds(center, radius, outset),
       .data.arc = {.center = center,
                    .radius = radius,
                    .start_degrees = start_degrees,
                    .sweep_degrees = sweep_degrees,
+                   .start_x = start_x,
+                   .start_y = start_y,
+                   .end_x = end_x,
+                   .end_y = end_y,
                    .stroke = *stroke},
   };
   return loom_command_append(loom, &command);
